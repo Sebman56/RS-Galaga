@@ -1,7 +1,10 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// 🎮 Code source en Rust du jeu Xgalaga selon Gemini AI le 2025-12-28 à 14h29
+// ═══════════════════════════════════════════════════════════════════════════
+
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy::app::AppExit;
-use bevy::math::Vec3Swizzles;
 
 // 🎮 CONSTANTES
 const PLAYER_SPEED: f32 = 500.0;
@@ -19,7 +22,6 @@ const PLAYER_HEALTH: i32 = 3;
 #[derive(Component)] struct Movable { velocity: Vec2 }
 #[derive(Component)] struct Health { current: i32 }
 #[derive(Component)] struct EnemyFireTimer(Timer);
-#[derive(Component)] struct Explosion { timer: Timer }
 
 // UI Markers
 #[derive(Component)] struct ScoreText;
@@ -121,43 +123,27 @@ fn player_shoot_system(mut commands: Commands, asset_server: Res<AssetServer>, k
             commands.spawn((
                 Bullet { from_player: true },
                 Movable { velocity: Vec2::new(0.0, BULLET_SPEED) },
-                Sprite { image: asset_server.load("sprites/bullet_01.png"), custom_size: Some(BULLET_SIZE), ..default() },
+                Sprite { image: asset_server.load("sprites/laser_blue.png"), custom_size: Some(BULLET_SIZE), ..default() },
                 Transform::from_translation(transform.translation + Vec3::new(0.0, 20.0, 0.0)),
             ));
         }
     }
 }
 
-fn enemy_shoot_system(
-    mut commands: Commands, 
-    asset_server: Res<AssetServer>, 
-    time: Res<Time>, 
-    player_q: Query<&Transform, With<Player>>,
-    mut enemy_q: Query<(&Transform, &mut EnemyFireTimer), With<Enemy>>
-) {
-    let player_pos = player_q.single().map(|t| t.translation.xy()).ok();
-
-    for (e_trans, mut timer) in enemy_q.iter_mut() {
+fn enemy_shoot_system(mut commands: Commands, asset_server: Res<AssetServer>, time: Res<Time>, mut query: Query<(&Transform, &mut EnemyFireTimer), With<Enemy>>) {
+    for (transform, mut timer) in query.iter_mut() {
         timer.0.tick(time.delta());
         if timer.0.just_finished() {
-            let mut shoot_dir = Vec2::new(0.0, -1.0);
-
-            if let Some(p_pos) = player_pos {
-                let to_player = (p_pos - e_trans.translation.xy()).normalize();
-                let random_offset = Vec2::new((rand::random::<f32>()-0.5)*0.2, (rand::random::<f32>()-0.5)*0.2);
-                shoot_dir = (to_player + random_offset).normalize();
-            }
-
             commands.spawn((
                 Bullet { from_player: false },
-                Movable { velocity: shoot_dir * (ENEMY_SPEED * 1.8) },
+                Movable { velocity: Vec2::new(0.0, -BULLET_SPEED * 0.4) },
                 Sprite {
-                    image: asset_server.load("sprites/bullet_02.png"),
+                    image: asset_server.load("sprites/laser_red.png"),
                     custom_size: Some(BULLET_SIZE),
-                    color: Color::srgb(1.0, 0.2, 0.2),
+                    color: Color::srgb(1.0, 0.0, 0.0),
                     ..default()
                 },
-                Transform::from_translation(e_trans.translation),
+                Transform::from_translation(transform.translation - Vec3::new(0.0, 20.0, 0.0)),
             ));
         }
     }
@@ -172,63 +158,35 @@ fn movement_system(mut commands: Commands, mut query: Query<(Entity, &Movable, &
         if transform.translation.y < -200.0 && transform.translation.y > -400.0 {
             transform.translation.x = transform.translation.x.clamp(-half_w + 20.0, half_w - 20.0);
         }
-        if transform.translation.y.abs() > half_h + 150.0 || transform.translation.x.abs() > half_w + 150.0 {
+        if transform.translation.y.abs() > half_h + 100.0 || transform.translation.x.abs() > half_w + 100.0 {
             commands.entity(entity).despawn();
         }
     }
 }
 
-fn wave_system(
-    mut commands: Commands, 
-    asset_server: Res<AssetServer>, 
-    time: Res<Time>, 
-    mut wave_mgr: ResMut<WaveManager>, 
-    mut game_state: ResMut<GameState>, 
-    enemy_q: Query<&Enemy>, 
-    window_q: Query<&Window, With<PrimaryWindow>>
-) {
+fn wave_system(mut commands: Commands, asset_server: Res<AssetServer>, time: Res<Time>, mut wave_mgr: ResMut<WaveManager>, mut game_state: ResMut<GameState>, enemy_q: Query<&Enemy>, window_q: Query<&Window, With<PrimaryWindow>>) {
     let window = window_q.single().expect("Window error");
     let enemy_count = enemy_q.iter().count();
 
-    // Logique des directions
     wave_mgr.direction = match (wave_mgr.current_level, wave_mgr.current_wave) {
-        (1, 3) => SpawnDirection::Right, 
-        (1, 4) => SpawnDirection::Left,
-        (2, 1) | (2, 3) | (3, 5) => SpawnDirection::Right,
+        (1, 3) => SpawnDirection::Right, (1, 4) => SpawnDirection::Left,
+        (2, 1) | (2, 3) | (3, 1) | (3, 5) => SpawnDirection::Right,
         (2, 2) | (2, 4) | (3, 2) | (3, 4) => SpawnDirection::Left,
-        (3, 3) => SpawnDirection::Top,
-        _ => SpawnDirection::Top,
+        (3, 3) => SpawnDirection::Top, _ => SpawnDirection::Top,
     };
 
     match wave_mgr.state {
         WaveState::Spawning => {
             wave_mgr.spawn_timer.tick(time.delta());
             if wave_mgr.spawn_timer.just_finished() && wave_mgr.enemies_spawned < 10 {
-                
-                // --- SELECTION DU SPRITE SELON DIRECTION ---
-                let sprite_path = match wave_mgr.direction {
-                    SpawnDirection::Left => "sprites/alien_red.png",
-                    SpawnDirection::Right => "sprites/alien_green.png",
-                    SpawnDirection::Top => "sprites/alien_grey.png",
-                };
-
                 let (start_pos, velocity) = match wave_mgr.direction {
                     SpawnDirection::Top => (Vec3::new((rand::random::<f32>() - 0.5) * window.width() * 0.8, window.height()/2.0 + 20.0, 0.0), Vec2::new(0.0, -ENEMY_SPEED)),
                     SpawnDirection::Left => (Vec3::new(-window.width()/2.0 - 20.0, 200.0, 0.0), Vec2::new(ENEMY_SPEED, -20.0)),
                     SpawnDirection::Right => (Vec3::new(window.width()/2.0 + 20.0, 200.0, 0.0), Vec2::new(-ENEMY_SPEED, -20.0)),
                 };
-
-                commands.spawn((
-                    Enemy, 
-                    Movable { velocity }, 
-                    EnemyFireTimer(Timer::from_seconds(2.0, TimerMode::Repeating)), 
-                    Sprite { 
-                        image: asset_server.load(sprite_path), 
-                        custom_size: Some(ENEMY_SIZE), 
-                        ..default() 
-                    },
-                    Transform::from_translation(start_pos)
-                ));
+                commands.spawn((Enemy, Movable { velocity }, EnemyFireTimer(Timer::from_seconds(2.0, TimerMode::Repeating)), 
+                    Sprite { image: asset_server.load("sprites/enemy_01.png"), custom_size: Some(ENEMY_SIZE), ..default() },
+                    Transform::from_translation(start_pos)));
                 wave_mgr.enemies_spawned += 1;
                 if wave_mgr.enemies_spawned >= 10 { wave_mgr.state = WaveState::Fighting; }
             }
@@ -248,59 +206,24 @@ fn wave_system(
     }
 }
 
-fn collision_system(
-    mut commands: Commands, 
-    asset_server: Res<AssetServer>,
-    mut state: ResMut<GameState>, 
-    bullet_q: Query<(Entity, &Transform, &Bullet)>, 
-    enemy_q: Query<(Entity, &Transform), With<Enemy>>, 
-    mut player_q: Query<(Entity, &Transform, &mut Health), With<Player>>
-) {
+fn collision_system(mut commands: Commands, mut state: ResMut<GameState>, bullet_q: Query<(Entity, &Transform, &Bullet)>, enemy_q: Query<(Entity, &Transform), With<Enemy>>, mut player_q: Query<(Entity, &Transform, &mut Health), With<Player>>) {
     for (b_ent, b_trans, b_type) in bullet_q.iter() {
-        let b_pos = b_trans.translation.xy();
         if b_type.from_player {
             for (e_ent, e_trans) in enemy_q.iter() {
-                if b_pos.distance(e_trans.translation.xy()) < 25.0 {
-                    commands.spawn((
-                        Explosion { timer: Timer::from_seconds(0.3, TimerMode::Once) },
-                        Sprite { image: asset_server.load("sprites/explosion_01.png"), custom_size: Some(Vec2::new(40.0, 40.0)), ..default() },
-                        Transform::from_translation(e_trans.translation),
-                    ));
-                    commands.entity(e_ent).despawn(); 
-                    commands.entity(b_ent).despawn(); 
-                    state.score += 10;
+                if b_trans.translation.distance(e_trans.translation) < 25.0 {
+                    commands.entity(e_ent).despawn(); commands.entity(b_ent).despawn(); state.score += 10;
                 }
             }
         } else if let Ok((p_ent, p_trans, mut p_health)) = player_q.single_mut() {
-            if b_pos.distance(p_trans.translation.xy()) < 20.0 {
-                commands.spawn((
-                    Explosion { timer: Timer::from_seconds(0.5, TimerMode::Once) },
-                    Sprite { image: asset_server.load("sprites/explosion_01.png"), custom_size: Some(Vec2::new(50.0, 50.0)), ..default() },
-                    Transform::from_translation(p_trans.translation),
-                ));
-                commands.entity(b_ent).despawn(); 
-                p_health.current += 1;
+            if b_trans.translation.distance(p_trans.translation) < 20.0 {
+                commands.entity(b_ent).despawn(); p_health.current -= 1;
                 if p_health.current <= 0 { commands.entity(p_ent).despawn(); state.game_over = true; }
             }
         }
     }
 }
 
-fn cleanup_explosions(mut commands: Commands, time: Res<Time>, mut query: Query<(Entity, &mut Explosion)>) {
-    for (entity, mut explosion) in query.iter_mut() {
-        explosion.timer.tick(time.delta());
-        if explosion.timer.is_finished() { commands.entity(entity).despawn(); }
-    }
-}
-
-fn ui_system(wave_mgr: Res<WaveManager>, 
-    game_state: Res<GameState>, 
-    player_q: Query<&Health, 
-    With<Player>>, 
-    mut texts: ParamSet<(Query<&mut Text,
-    With<LevelText>>, 
-    Query<&mut Text, 
-    With<ScoreText>>, Query<&mut Text, With<LivesText>>, Query<&mut Text, With<MainMessage>>)>) {
+fn ui_system(wave_mgr: Res<WaveManager>, game_state: Res<GameState>, player_q: Query<&Health, With<Player>>, mut texts: ParamSet<(Query<&mut Text, With<LevelText>>, Query<&mut Text, With<ScoreText>>, Query<&mut Text, With<LivesText>>, Query<&mut Text, With<MainMessage>>)>) {
     let dir = match wave_mgr.direction { SpawnDirection::Top => "Haut", SpawnDirection::Left => "Gauche", SpawnDirection::Right => "Droite" };
     for mut t in texts.p0().iter_mut() { **t = format!("Vague: {} ({}) Lvl: {}", wave_mgr.current_wave, dir, wave_mgr.current_level); }
     for mut t in texts.p1().iter_mut() { **t = format!("Score: {}", game_state.score); }
@@ -319,7 +242,7 @@ fn input_game_system(
     kb: Res<ButtonInput<KeyCode>>, 
     mut game_state: ResMut<GameState>, 
     mut wave_mgr: ResMut<WaveManager>, 
-    mut exit: MessageWriter<AppExit>, 
+    mut exit: MessageWriter<AppExit>, // Correction MessageWriter 0.17
     time: Res<Time>, 
     all_ents: Query<Entity, Or<(With<Player>, With<Enemy>, With<Bullet>)>>, 
     asset_server: Res<AssetServer>
@@ -340,21 +263,22 @@ fn input_game_system(
 
     if let Some(ref mut timer) = game_state.exit_timer {
         timer.tick(time.delta());
-        if timer.just_finished() { exit.write(AppExit::Success); }
+        if timer.just_finished() {
+            exit.write(AppExit::Success); // Syntaxe correcte 0.17 : .write()
+        }
     }
 }
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .insert_resource(ClearColor(Color::srgb(0.0, 0.0, 0.05)))
+        .insert_resource(ClearColor(Color::srgb(0.0, 0.0, 0.1)))
         .init_resource::<GameState>()
         .init_resource::<WaveManager>()
         .add_systems(Startup, setup_game)
         .add_systems(Update, (
             player_control_system, player_shoot_system, enemy_shoot_system,
-            movement_system, wave_system, collision_system, cleanup_explosions,
-            ui_system, input_game_system,
+            movement_system, wave_system, collision_system, ui_system, input_game_system,
         ))
         .run();
 }
