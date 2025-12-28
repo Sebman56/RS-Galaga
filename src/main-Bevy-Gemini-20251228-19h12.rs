@@ -290,36 +290,6 @@ fn collision_system(
     enemy_q: Query<(Entity, &Transform), With<Enemy>>, 
     mut player_q: Query<(Entity, &Transform, &mut Health), With<Player>>
 ) {
-
-    // --- 1. On regarde si le joueur touche un alien (Le nouveau bout de code !) ---
-    if let Ok((p_ent, p_trans, mut p_health)) = player_q.single_mut() {
-        let p_pos = p_trans.translation.xy(); // Position de ton vaisseau
-        
-        for (e_ent, e_trans) in enemy_q.iter() {
-            let e_pos = e_trans.translation.xy(); // Position de l'alien
-            
-            // Si la distance est plus petite que 30 pixels (CRASH !)
-            if p_pos.distance(e_pos) < 30.0 {
-                // On fait une explosion à l'endroit de l'impact
-                commands.spawn((
-                    Explosion { timer: Timer::from_seconds(0.5, TimerMode::Once) },
-                    Sprite { image: asset_server.load("sprites/explosion_01.png"), custom_size: Some(Vec2::new(60.0, 60.0)), ..default() },
-                    Transform::from_translation(p_trans.translation),
-                ));
-
-                commands.entity(e_ent).despawn(); // L'alien est détruit dans le crash
-                p_health.current += 1; // Tu perds un coeur !
-                
-                if p_health.current <= 0 {
-                    commands.entity(p_ent).despawn(); // Ton vaisseau disparaît
-                    state.game_over = true; // C'est fini !
-                }
-            }
-        }
-    }
-
-    // --- 2. On garde la logique des balles (Ton code actuel) ---
-
     for (b_ent, b_trans, b_type) in bullet_q.iter() {
         let b_pos = b_trans.translation.xy();
         if b_type.from_player { // Si c'est TA balle
