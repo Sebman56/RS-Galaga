@@ -1,21 +1,15 @@
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 🎮 Code source en Rust du jeu Xgalaga selon Gemini AI le 2025-01-02 à 02h13
+// 🎮 Code source en Rust du jeu Xgalaga selon Gemini AI le 2025-01-02 à 00h13
 // ═══════════════════════════════════════════════════════════════════════════
 //
 //
 // Message correct
 // le vaisseau ok
 // Utilisation des touches "Q" "X" pour sortir, "P" pour pause, "R" pour recommencer le jeu
-// Aliens du haut de couelur gris, de gauvhe de couelur gauche, de droite de couelur verte
-// Forcage des 3 premieres vagues, 1er Level: 
-//          La 1ere vague vient de la la gauche, 
-//          la 2eme vague vient de la droite et 
-//          la 3eme vague vient du haut
+// Aliens du haut de couleur gris, de gauche de couleur gauche, de droite de couleur verte
 //
 //
-//
-// Attribuer un sprite pour chaque tir bonus
 //
 // ═══════════════════════════════════════════════════════════════════════════
 // 🛸 XGALAGA RUST - VERSION EXPLIQUÉE POUR LES FUTURS GÉNIES
@@ -90,32 +84,6 @@ struct GameState { // Le "cerveau" du jeu.
     victory: bool, // Est-ce que tu as gagné ?
 }
 
-
-#[derive(Clone, Copy, PartialEq)]
-enum WeaponMode {
-    Single, DoubleJumelé, DoubleV, Triple, Quadruple, Quintuple, Sixtuple, Septuple,
-    Rapid2, Rapid3, Rapid4, Rapid5 // Balles l'une après l'autre
-}
-
-#[derive(Component)]
-struct PlayerStats {
-    weapon: WeaponMode,
-    rapid_fire_timer: Timer,
-    bullets_left_to_fire: u32,
-}
-
-#[derive(Component)]
-enum BonusType {
-    Weapon(WeaponMode),
-    ExtraLife,
-    NextLevel,
-}
-
-#[derive(Component)]
-struct PowerUp {
-    kind: BonusType,
-}
-
 fn main() { // La fonction principale : c'est le bouton "START" du code.
     App::new() // On crée une nouvelle application de jeu.
         .add_plugins(DefaultPlugins) // On installe tous les outils de base (sons, images, fenêtre).
@@ -167,11 +135,6 @@ fn spawn_player(commands: &mut Commands, asset_server: &Res<AssetServer>) { // F
         Player, // On lui met l'étiquette Joueur.
         Movable { velocity: Vec2::ZERO }, // Il ne bouge pas encore.
         Health { current: PLAYER_HEALTH }, // On lui donne ses 3 coeurs.
-        PlayerStats { 
-            weapon: WeaponMode::Single, 
-            rapid_fire_timer: Timer::from_seconds(0.1, TimerMode::Repeating),
-            bullets_left_to_fire: 0 
-            },
         Sprite { // On lui donne une image.
             image: asset_server.load("sprites/player_01.png"), // On charge l'image du vaisseau.
             custom_size: Some(PLAYER_SIZE), // On règle sa taille.
@@ -225,11 +188,8 @@ fn wave_system( // Le système qui gère l'arrivée des aliens.
     let enemy_count = enemy_q.iter().count(); // On compte les aliens sur l'écran.
 
     wave_mgr.direction = match (wave_mgr.current_level, wave_mgr.current_wave) { // On choisit d'où ils viennent.
-        
-        (1, 1) => SpawnDirection::Left, // Niveau 1-1 : ils arrivent de gauche.
-        (1, 2) => SpawnDirection::Right, // Niveau 1-2 : ils arrivent de droite.
-        (1, 3) => SpawnDirection::Top, // Niveau 1-3 : ils arrivent de gauche.
-        
+        (1, 3) => SpawnDirection::Right, // Niveau 1-3 : ils arrivent de droite.
+        (1, 4) => SpawnDirection::Left, // Niveau 1-4 : ils arrivent de gauche.
         (2, 1) | (2, 3) | (3, 5) => SpawnDirection::Right, // D'autres niveaux de droite.
         (2, 2) | (2, 4) | (3, 2) | (3, 4) => SpawnDirection::Left, // D'autres niveaux de gauche.
         _ => SpawnDirection::Top, // Sinon, ils arrivent par le haut.
@@ -306,6 +266,20 @@ fn player_control_system(kb: Res<ButtonInput<KeyCode>>, window_q: Query<&Window,
     }
 }
 
+fn player_shoot_system(mut commands: Commands, asset_server: Res<AssetServer>, kb: Res<ButtonInput<KeyCode>>, query: Query<&Transform, With<Player>>, state: Res<GameState>) { // Faire Pan Pan !
+    if state.game_over || state.victory { return; } // Si c'est fini, plus de balles.
+    if kb.just_pressed(KeyCode::Space) { // Si tu appuies sur Espace...
+        if let Ok(transform) = query.single() { // Si ton vaisseau est là...
+            commands.spawn(( // On fabrique une balle !
+                Bullet { from_player: true }, // Elle vient de toi.
+                Movable { velocity: Vec2::new(0.0, BULLET_SPEED) }, // Elle monte tout droit.
+                Sprite { image: asset_server.load("sprites/bullet_01.png"), custom_size: Some(BULLET_SIZE), ..default() }, // Son image.
+                Transform::from_translation(transform.translation + Vec3::new(0.0, 20.0, 0.0)), // On la fait partir du haut du vaisseau.
+            ));
+        }
+    }
+}
+
 fn movement_system(mut commands: Commands, mut query: Query<(Entity, &Movable, &mut Transform)>, time: Res<Time>) { // Le moteur qui fait tout bouger.
     for (entity, movable, mut trans) in query.iter_mut() { // Pour chaque objet qui peut bouger...
         trans.translation += movable.velocity.extend(0.0) * time.delta_secs(); // On change sa position selon sa vitesse.
@@ -330,150 +304,53 @@ fn enemy_shoot_system(mut commands: Commands, asset_server: Res<AssetServer>, ti
         }
     }
 }
-fn player_shoot_system(
-    mut commands: Commands, 
-    asset_server: Res<AssetServer>, 
-    kb: Res<ButtonInput<KeyCode>>, 
-    mut query: Query<(&Transform, &mut PlayerStats), With<Player>>,
-    time: Res<Time>,
+
+fn collision_system( // Le système qui gère les "BOOM" !
+    mut commands: Commands, mut state: ResMut<GameState>, mut wave_mgr: ResMut<WaveManager>,
+    bullet_q: Query<(Entity, &Transform, &Bullet)>, enemy_q: Query<(Entity, &Transform, &Enemy)>, 
+    mut player_q: Query<(Entity, &Transform, &mut Health), With<Player>>, asset_server: Res<AssetServer>,
 ) {
-    let Ok((transform, mut stats)) = query.single_mut() else { return };
-    let base_pos = transform.translation + Vec3::new(0.0, 20.0, 0.0);
+    let Ok((p_ent, p_trans, mut p_health)) = player_q.single_mut() else { return }; // On cherche ton vaisseau et tes vies.
+    let p_pos = p_trans.translation.xy(); // Ta position exacte.
 
-    // Tir instantané au clic
-    if kb.just_pressed(KeyCode::Space) {
-        match stats.weapon {
-            WeaponMode::Single => spawn_bullet(&mut commands, &asset_server, base_pos, Vec2::new(0.0, BULLET_SPEED)),
-            WeaponMode::DoubleJumelé => {
-                spawn_bullet(&mut commands, &asset_server, base_pos + Vec3::new(-10.0, 0.0, 0.0), Vec2::new(0.0, BULLET_SPEED));
-                spawn_bullet(&mut commands, &asset_server, base_pos + Vec3::new(10.0, 0.0, 0.0), Vec2::new(0.0, BULLET_SPEED));
-            },
-            WeaponMode::DoubleV => {
-                spawn_bullet(&mut commands, &asset_server, base_pos, Vec2::new(-150.0, BULLET_SPEED));
-                spawn_bullet(&mut commands, &asset_server, base_pos, Vec2::new(150.0, BULLET_SPEED));
-            },
-            WeaponMode::Triple | WeaponMode::Quadruple | WeaponMode::Quintuple | WeaponMode::Sixtuple | WeaponMode::Septuple => {
-                let count = match stats.weapon {
-                    WeaponMode::Triple => 3, WeaponMode::Quadruple => 4,
-                    WeaponMode::Quintuple => 5, WeaponMode::Sixtuple => 6,
-                    _ => 7,
-                };
-                for i in 0..count {
-                    let step = i as f32 - (count as f32 - 1.0) / 2.0;
-                    spawn_bullet(&mut commands, &asset_server, base_pos, Vec2::new(step * 120.0, BULLET_SPEED));
-                }
-            },
-            // Prépare la rafale (bullets une après l'autre)
-            WeaponMode::Rapid2 | WeaponMode::Rapid3 | WeaponMode::Rapid4 | WeaponMode::Rapid5 => {
-                stats.bullets_left_to_fire = match stats.weapon {
-                    WeaponMode::Rapid2 => 2, WeaponMode::Rapid3 => 3, WeaponMode::Rapid4 => 4, _ => 5,
-                };
-            }
-        }
-    }
+    
 
-    // Gestion automatique des rafales
-    if stats.bullets_left_to_fire > 0 {
-        stats.rapid_fire_timer.tick(time.delta());
-        if stats.rapid_fire_timer.just_finished() {
-            spawn_bullet(&mut commands, &asset_server, base_pos, Vec2::new(0.0, BULLET_SPEED));
-            stats.bullets_left_to_fire -= 1;
-        }
-    }
-}
 
-// Fonction utilitaire indispensable
-fn spawn_bullet(commands: &mut Commands, asset_server: &Res<AssetServer>, pos: Vec3, vel: Vec2) {
-    commands.spawn((
-        Bullet { from_player: true },
-        Movable { velocity: vel },
-        Sprite { image: asset_server.load("sprites/bullet_01.png"), custom_size: Some(BULLET_SIZE), ..default() },
-        Transform::from_translation(pos),
-    ));
-}
+    for (e_ent, e_trans, e_info) in enemy_q.iter() { // Pour chaque alien...
+        let e_pos = e_trans.translation.xy(); // Sa position exacte.
+        let hit_radius = if e_info.kind == EnemyType::Boss { 50.0 } else { 25.0 }; // Le rayon de collision (plus gros pour le Boss).
 
-fn collision_system(
-    mut commands: Commands, 
-    mut state: ResMut<GameState>, 
-    mut wave_mgr: ResMut<WaveManager>,
-    bullet_q: Query<(Entity, &Transform, &Bullet)>, 
-    enemy_q: Query<(Entity, &Transform, &Enemy)>, 
-    mut player_q: Query<(Entity, &Transform, &mut Health, &mut PlayerStats), With<Player>>, 
-    powerup_q: Query<(Entity, &Transform, &PowerUp)>, // <--- IMPORTANT
-    asset_server: Res<AssetServer>,
-) {
-    let Ok((p_ent, p_trans, mut p_health, mut p_stats)) = player_q.single_mut() else { return };
-    let p_pos = p_trans.translation.xy();
-
-    // 1. RAMASSAGE DES BONUS (Carrés jaunes)
-    for (pu_ent, pu_trans, pu_info) in powerup_q.iter() {
-        if p_pos.distance(pu_trans.translation.xy()) < 25.0 {
-            match pu_info.kind {
-                BonusType::Weapon(w) => p_stats.weapon = w, // Changement d'arme
-                BonusType::ExtraLife => p_health.current += 1, // +1 Vie
-                BonusType::NextLevel => { // Skip Level
-                    wave_mgr.state = WaveState::LevelCompleted;
-                    wave_mgr.wave_timer.reset();
-                }
-            }
-            commands.entity(pu_ent).despawn(); // Détruit le carré jaune
-        }
-    }
-
-    // 2. LOGIQUE EXISTANTE (Aliens et Balles)
-    for (e_ent, e_trans, e_info) in enemy_q.iter() {
-        let e_pos = e_trans.translation.xy();
-        let hit_radius = if e_info.kind == EnemyType::Boss { 50.0 } else { 25.0 };
-
-        // Si alien touche joueur
-        if p_pos.distance(e_pos) < hit_radius {
-            if let Ok(mut cmd) = commands.get_entity(e_ent) { cmd.despawn(); }
-            p_health.current -= 1;
-            spawn_explosion(&mut commands, &asset_server, p_trans.translation);
-            if p_health.current <= 0 { if let Ok(mut cmd) = commands.get_entity(p_ent) { cmd.despawn(); } state.game_over = true; }
+        if p_pos.distance(e_pos) < hit_radius { // Si l'alien te fonce dessus...
+            if let Ok(mut cmd) = commands.get_entity(e_ent) { cmd.despawn(); } // L'alien explose.
+            p_health.current -= 1; // Tu perds un coeur !
+            spawn_explosion(&mut commands, &asset_server, p_trans.translation); // On fait une explosion sur toi.
+            if p_health.current <= 0 { if let Ok(mut cmd) = commands.get_entity(p_ent) { cmd.despawn(); } state.game_over = true; } // Si plus de vie, Game Over.
         }
 
-        for (b_ent, b_trans, b_type) in bullet_q.iter() {
-            let b_pos = b_trans.translation.xy();
-            if b_type.from_player && b_pos.distance(e_pos) < hit_radius {
-                // MORT D'UN ALIEN -> CHANCE DE BONUS
-                if rand::random::<f32>() < 0.2 { // 20% de chance
-                    let random_weapon = match rand::random::<u32>() % 8 {
-                        0 => WeaponMode::DoubleV, 1 => WeaponMode::Triple, 2 => WeaponMode::Septuple,
-                        3 => WeaponMode::Rapid3, 4 => WeaponMode::DoubleJumelé, _ => WeaponMode::Quintuple,
-                    };
-                    
-                    // On choisit au hasard entre arme, vie ou skip level
-                    let kind = match rand::random::<u32>() % 10 {
-                        0..=7 => BonusType::Weapon(random_weapon),
-                        8 => BonusType::ExtraLife,
-                        _ => BonusType::NextLevel,
-                    };
-
-                    commands.spawn((
-                        PowerUp { kind },
-                        Movable { velocity: Vec2::new(0.0, -150.0) },
-                        Sprite { color: Color::srgb(1.0, 1.0, 0.0), custom_size: Some(Vec2::splat(15.0)), ..default() },
-                        Transform::from_translation(e_trans.translation),
-                    ));
-                }
-
-                state.score += if e_info.kind == EnemyType::Boss { 100 } else { 10 };
-                wave_mgr.enemies_killed_by_player += 1;
-                spawn_explosion(&mut commands, &asset_server, e_trans.translation);
-                if let Ok(mut cmd) = commands.get_entity(e_ent) { cmd.despawn(); }
-                if let Ok(mut cmd) = commands.get_entity(b_ent) { cmd.despawn(); }
-            } else if !b_type.from_player && b_pos.distance(p_pos) < 15.0 {
-                p_health.current -= 1;
-                spawn_explosion(&mut commands, &asset_server, p_trans.translation);
-                if let Ok(mut cmd) = commands.get_entity(b_ent) { cmd.despawn(); }
-                if p_health.current <= 0 { state.game_over = true; }
+        for (b_ent, b_trans, b_type) in bullet_q.iter() { // Pour chaque balle qui vole...
+            let b_pos = b_trans.translation.xy(); // Position de la balle.
+            if b_type.from_player && b_pos.distance(e_pos) < hit_radius { // Si ta balle touche l'alien...
+                let points = if e_info.kind == EnemyType::Boss { 100 } else { 10 }; // On gagne 100 points pour un Boss, 10 sinon.
+                state.score += points; // On ajoute les points au score.
+                wave_mgr.enemies_killed_by_player += 1; // On compte un alien tué.
+                spawn_explosion(&mut commands, &asset_server, e_trans.translation); // Explosion !
+                commands.spawn(( // On affiche les points qui flottent.
+                    FloatingScore { timer: Timer::from_seconds(0.7, TimerMode::Once) }, // Ça reste 0.7 secondes.
+                    Text2d::new(format!("+{}", points)), // On écrit "+10" ou "+100".
+                    TextFont::from_font_size(22.0), // Taille de l'écriture.
+                    Transform::from_translation(e_trans.translation + Vec3::new(0.0, 20.0, 1.0)), // Juste au-dessus de l'alien.
+                ));
+                if let Ok(mut cmd) = commands.get_entity(e_ent) { cmd.despawn(); } // On supprime l'alien.
+                if let Ok(mut cmd) = commands.get_entity(b_ent) { cmd.despawn(); } // On supprime la balle.
+            } else if !b_type.from_player && b_pos.distance(p_pos) < 15.0 { // Si une balle alien te touche...
+                p_health.current -= 1; // Tu perds un coeur.
+                spawn_explosion(&mut commands, &asset_server, p_trans.translation); // Explosion !
+                if let Ok(mut cmd) = commands.get_entity(b_ent) { cmd.despawn(); } // La balle disparaît.
+                if p_health.current <= 0 { state.game_over = true; } // Si plus de vie, Game Over.
             }
         }
     }
 }
-
-
 
 fn spawn_explosion(commands: &mut Commands, asset_server: &Res<AssetServer>, pos: Vec3) { // Créer un feu d'artifice !
     commands.spawn((
